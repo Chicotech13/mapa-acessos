@@ -20,6 +20,7 @@
       <a href="#validacao" data-tab="validacao" role="tab">Validação</a>
       <a href="#editar" data-tab="editar" role="tab">Editar</a>
     </nav>
+    <button type="button" class="btn small add-top" data-action="nova-pessoa">+ Adicionar pessoa</button>
   </div>
 </header>
 
@@ -47,6 +48,21 @@
       <button type="button" class="btn danger" data-action="confirmar-restaurar">Apagar edições</button>
     </div>
   </div>
+</div>
+
+<div class="dialog-back" id="dlg-pessoa" hidden>
+  <form class="dialog" id="form-pessoa" role="dialog" aria-modal="true" aria-labelledby="dlg-pessoa-title" novalidate>
+    <h3 id="dlg-pessoa-title">Adicionar pessoa</h3>
+    <label class="field">Nome<input type="text" name="nome" autocomplete="off" placeholder="Como aparece no desenho"></label>
+    <label class="field">Time<select name="time"></select></label>
+    <label class="field">Papel<select name="papel"></select></label>
+    <label class="checks"><input type="checkbox" name="lider"> É o líder desse time</label>
+    <p class="muted hint">Fica salvo só neste navegador, como as outras edições. Exporte para compartilhar.</p>
+    <div class="row-btns">
+      <button type="button" class="btn ghost" data-action="fechar-pessoa">Cancelar</button>
+      <button type="submit" class="btn">Adicionar</button>
+    </div>
+  </form>
 </div>
 
 <script src="data.js"></script>

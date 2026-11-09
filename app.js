@@ -10,6 +10,8 @@
   if (!state) state = clone(ORIGINAL);
   let editSub = "pessoas";
   let timeSel = null;
+  let pessoaSel = null; // { pid, tid } — name clicked in the map
+  let selecionarDepois = null; // person to highlight after the map renders (after adding someone)
 
   function carregar() {
     try {
@@ -56,6 +58,24 @@
     return n;
   }
   const chip = n => `<span class="lv lv-${n}">${esc(NIVEIS[n].curto)}</span>`;
+  const cell = n => `<td class="c-${n}">${chip(n)}</td>`;
+  const legendaCompacta = () => `<div class="legend-mini" aria-label="Cores dos níveis">${NIVEIS.map((n, i) => chip(i)).join("")}</div>`;
+  /** Como a pessoa aparece: papel e times. */
+  function papelTexto(p) {
+    const leads = lidera(p.id);
+    const nomes = ts => ts.map(t => t.curto || t.nome).join(" e ");
+    if (p.papel === "coordenador" || p.papel === "diretor" || p.papel === "admin") {
+      const pp = PAPEIS.find(x => x.id === p.papel)?.nome || p.papel;
+      return leads.length ? `${pp} · ${nomes(leads)}` : pp;
+    }
+    if (leads.length) {
+      const t = time(p.time);
+      const extra = t && !leads.includes(t) ? `; membro de ${t.curto || t.nome}` : "";
+      return `Líder de ${nomes(leads)}${extra}`;
+    }
+    const t = time(p.time);
+    return t ? `Membro de ${t.curto || t.nome}` : "Sem time";
+  }
 
   /* ---------- tabs ---------- */
   const TABS = ["mapa", "permissoes", "validacao", "editar"];
@@ -91,7 +111,8 @@
     const ints = ORIGINAL.integracoes.map(o => `<div class="box int"><b>${esc(o.nome)}</b><span>${esc(o.uso)}</span></div>`).join("");
     el.innerHTML = `
       <div class="intro"><h1>Áreas da empresa e o que o ERP controla</h1>
-      <p>À esquerda, as pastas, os times e quem trabalha em cada um. No meio, os módulos do painel do operador. À direita, os outros painéis e os serviços de fora. Clique num time para ver as ligações.</p></div>
+      <p>À esquerda, as pastas, os times e quem trabalha em cada um. No meio, os módulos do painel do operador. À direita, os outros painéis e os serviços de fora. Clique no nome de um time para ver os módulos que ele usa, ou no nome de uma pessoa (líder ou membro) para ver o nível dela em cada módulo, nas cores abaixo.</p></div>
+      ${legendaCompacta()}
       <div class="board" id="board"><svg id="links" aria-hidden="true"></svg>
         <div class="lane"><div class="lane-title">Áreas da empresa</div>${areas}</div>
         <div class="lane"><div class="lane-title">O que o ERP controla</div>
@@ -102,17 +123,72 @@
       </div>
       <p class="muted">Ligações e nomes conforme ${esc(state.fonte)}.</p>`;
     timeSel = null;
-    el.querySelectorAll(".team").forEach(b => b.addEventListener("click", () => selecionarTime(b.dataset.team)));
+    pessoaSel = null;
+    el.querySelectorAll(".team-head").forEach(b => b.addEventListener("click", () => selecionarTime(b.closest(".team").dataset.team)));
+    el.querySelectorAll(".pname").forEach(b => b.addEventListener("click", () => selecionarPessoa(b.dataset.p, b.closest(".team").dataset.team)));
+    if (selecionarDepois) {
+      const s = selecionarDepois; selecionarDepois = null;
+      selecionarPessoa(s.pid, s.tid);
+      el.querySelector(`.team[data-team="${s.tid}"]`)?.scrollIntoView({ block: "center" });
+    }
   }
   function teamCard(t) {
     const l = pessoa(t.lider);
-    const ms = membros(t.id).map(p => esc(p.nome) + (p.pendente ? " (a confirmar)" : "")).join(", ");
-    const lider = l ? `<span class="lead-name"><em>${esc(l.nome)}</em> · ${l.papel === "coordenador" ? "coordenador" : "líder"}</span>` : t.semLider ? "" : `<span class="lead-name"><i>líder a definir</i></span>`;
-    return `<button class="team" data-team="${esc(t.id)}" type="button"><b>${esc(t.nome)}</b>${lider}${ms ? `<span class="members">${ms}</span>` : l ? "" : `<span class="members">Sem membros</span>`}${t.painel ? `<span class="goes">${esc(t.painel)}</span>` : ""}</button>`;
+    const nome = p => `<button type="button" class="pname" data-p="${esc(p.id)}" aria-pressed="false">${esc(p.nome)}${p.pendente ? " <i>(a confirmar)</i>" : ""}</button>`;
+    const ms = membros(t.id);
+    const lider = l ? `<span class="lead-name">${nome(l)}<small>${l.papel === "coordenador" ? "coordenador" : "líder"}</small></span>` : t.semLider ? "" : `<span class="lead-name"><i>líder a definir</i></span>`;
+    const gente = ms.length ? `<span class="members">${ms.map(nome).join("")}</span>` : l ? "" : `<span class="members empty">Sem membros</span>`;
+    const qtd = t.modulos.length ? `<span>${t.modulos.length} ${t.modulos.length === 1 ? "módulo" : "módulos"}</span>` : "";
+    return `<div class="team" data-team="${esc(t.id)}"><button class="team-head" type="button"><b>${esc(t.nome)}</b>${qtd}</button>${lider}${gente}${t.painel ? `<span class="goes">${esc(t.painel)}</span>` : ""}<div class="pdetail" hidden></div></div>`;
+  }
+  function limparPessoa(board) {
+    pessoaSel = null;
+    board.classList.remove("selp");
+    board.querySelectorAll(".pname").forEach(b => b.setAttribute("aria-pressed", "false"));
+    board.querySelectorAll(".pdetail").forEach(d => { d.hidden = true; d.innerHTML = ""; });
+    board.querySelectorAll(".mod").forEach(m => { delete m.dataset.lv; m.querySelector(".plv")?.remove(); });
+  }
+  function limparTime(board) {
+    timeSel = null;
+    board.classList.remove("sel");
+    board.querySelectorAll(".team").forEach(el => el.classList.remove("on"));
+    board.querySelectorAll(".mod").forEach(m => m.classList.remove("on"));
+  }
+  function selecionarPessoa(pid, tid) {
+    const board = document.getElementById("board");
+    const mesmo = pessoaSel && pessoaSel.pid === pid && pessoaSel.tid === tid;
+    limparTime(board);
+    limparPessoa(board);
+    const p = pessoa(pid);
+    if (mesmo || !p) { desenharLinhas(); return; }
+    pessoaSel = { pid, tid };
+    const card = board.querySelector(`.team[data-team="${tid}"]`);
+    card.querySelector(`.pname[data-p="${pid}"]`)?.setAttribute("aria-pressed", "true");
+    board.classList.add("selp");
+    const lista = state.modulos.map(m => ({ m, n: m.todos ? null : nivelPessoa(p, m.id) }));
+    board.querySelectorAll(".mod").forEach(el => {
+      const it = lista.find(x => x.m.id === el.dataset.mod);
+      if (!it) return;
+      const n = it.n ?? 1;
+      el.dataset.lv = n;
+      el.insertAdjacentHTML("afterbegin", `<span class="plv">${it.n === null ? `<span class="lv lv-1">Todos veem</span>` : chip(n)}</span>`);
+    });
+    const com = lista.filter(x => x.n > 0);
+    const sem = lista.filter(x => x.n === 0);
+    const todos = lista.filter(x => x.n === null);
+    const det = card.querySelector(".pdetail");
+    det.innerHTML = `
+      <div class="pd-head"><b>${esc(p.nome)}</b><span>${esc(papelTexto(p))}</span></div>
+      ${com.length ? `<ul class="pd-list">${com.map(x => `<li><span>${esc(x.m.nome)}</span>${chip(x.n)}</li>`).join("")}</ul>` : `<p class="pd-sem">Sem acesso a nenhum módulo do painel do operador.</p>`}
+      ${sem.length ? `<p class="pd-sem"><span class="lv lv-0">Sem acesso</span> ${sem.map(x => esc(x.m.curto || x.m.nome)).join(", ")}</p>` : ""}
+      ${todos.length ? `<p class="pd-sem">${todos.map(x => esc(x.m.nome)).join(", ")}: liberado para todos.</p>` : ""}`;
+    det.hidden = false;
+    desenharLinhas();
   }
   function selecionarTime(id) {
-    timeSel = timeSel === id ? null : id;
     const board = document.getElementById("board");
+    limparPessoa(board);
+    timeSel = timeSel === id ? null : id;
     board.querySelectorAll(".team").forEach(el => el.classList.toggle("on", el.dataset.team === timeSel));
     board.classList.toggle("sel", !!timeSel);
     const mods = timeSel ? time(timeSel).modulos : [];
@@ -123,12 +199,24 @@
     const svg = document.getElementById("links");
     if (!svg) return;
     svg.innerHTML = "";
-    if (!timeSel || getComputedStyle(svg).display === "none") return;
+    if ((!timeSel && !pessoaSel) || getComputedStyle(svg).display === "none") return;
     const board = document.getElementById("board");
     const b = board.getBoundingClientRect();
-    const t = board.querySelector(`.team[data-team="${timeSel}"]`).getBoundingClientRect();
-    const x1 = t.right - b.left, y1 = t.top + t.height / 2 - b.top;
-    time(timeSel).modulos.forEach(id => {
+    let x1, y1, alvos;
+    if (pessoaSel) {
+      const card = board.querySelector(`.team[data-team="${pessoaSel.tid}"]`);
+      const btn = card?.querySelector(`.pname[data-p="${pessoaSel.pid}"]`);
+      const p = pessoa(pessoaSel.pid);
+      if (!card || !btn || !p) return;
+      const c = card.getBoundingClientRect(), r = btn.getBoundingClientRect();
+      x1 = c.right - b.left; y1 = r.top + r.height / 2 - b.top;
+      alvos = state.modulos.filter(m => !m.todos).map(m => ({ id: m.id, n: nivelPessoa(p, m.id) })).filter(a => a.n > 0);
+    } else {
+      const t = board.querySelector(`.team[data-team="${timeSel}"]`).getBoundingClientRect();
+      x1 = t.right - b.left; y1 = t.top + t.height / 2 - b.top;
+      alvos = time(timeSel).modulos.map(id => ({ id, n: 0 }));
+    }
+    alvos.forEach(({ id, n }) => {
       const node = board.querySelector(`.mod[data-mod="${id}"]`);
       if (!node) return;
       const m = node.getBoundingClientRect();
@@ -136,6 +224,7 @@
       const dx = Math.max(40, (x2 - x1) / 2);
       const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
       p.setAttribute("d", `M${x1},${y1} C${x1 + dx},${y1} ${x2 - dx},${y2} ${x2},${y2}`);
+      if (n) p.setAttribute("class", `lvp-${n}`);
       svg.appendChild(p);
     });
   }
@@ -147,7 +236,7 @@
     const legenda = NIVEIS.map((n, i) => `<div class="item">${chip(i)}<span>${esc(n.descricao)}</span></div>`).join("");
     const colMods = state.modulos.filter(m => !m.todos);
     const head = colMods.map(m => `<th scope="col">${esc(m.curto || m.nome)}</th>`).join("");
-    const papeisRows = PAPEIS.map(pp => `<tr><th scope="row">${esc(pp.nome)}<small>${esc(pp.escopo)}</small></th>${colMods.map(m => `<td>${chip(state.niveis[pp.id]?.[m.id] ?? 0)}</td>`).join("")}</tr>`).join("");
+    const papeisRows = PAPEIS.map(pp => `<tr><th scope="row">${esc(pp.nome)}<small>${esc(pp.escopo)}</small></th>${colMods.map(m => cell(state.niveis[pp.id]?.[m.id] ?? 0)).join("")}</tr>`).join("");
 
     const pessoasRows = state.times.map(t => {
       const gente = [pessoa(t.lider), ...membros(t.id)].filter(Boolean).filter(p => p.time === t.id || t.lider === p.id);
@@ -155,7 +244,7 @@
       if (!uniq.length) return "";
       return `<tr class="grp"><th colspan="${colMods.length + 1}">${esc(t.nome)}</th></tr>` + uniq.map(p => {
         const papel = t.lider === p.id ? (p.papel === "coordenador" ? "Coordenador" : "Líder") : PAPEIS.find(x => x.id === p.papel)?.nome || "Membro";
-        return `<tr><th scope="row">${esc(p.nome)}<small>${esc(papel)}</small></th>${colMods.map(m => `<td>${chip(nivelPessoa(p, m.id))}</td>`).join("")}</tr>`;
+        return `<tr><th scope="row">${esc(p.nome)}<small>${esc(papel)}</small></th>${colMods.map(m => cell(nivelPessoa(p, m.id))).join("")}</tr>`;
       }).join("");
     }).join("");
 
@@ -270,9 +359,9 @@
         <td><button type="button" class="iconbtn" data-del="${esc(p.id)}">Remover</button></td></tr>`;
     }).join("");
     body.innerHTML = `
+      <div class="addrow"><input type="text" id="nova-pessoa" placeholder="Nome da pessoa" aria-label="Nome da nova pessoa"><select id="nova-pessoa-time" aria-label="Time da nova pessoa">${optsTimes(state.times[0]?.id)}</select><button type="button" class="btn small" id="add-pessoa">Adicionar pessoa</button></div>
       <p class="muted">Líder se define na aba Times. Aqui fica o time principal e o papel de cada pessoa.</p>
-      <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Time</th><th>Papel</th><th>Situação</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
-      <div class="addrow"><input type="text" id="nova-pessoa" placeholder="Nome da pessoa" aria-label="Nome da nova pessoa"><select id="nova-pessoa-time" aria-label="Time da nova pessoa">${optsTimes(state.times[0]?.id)}</select><button type="button" class="btn small" id="add-pessoa">Adicionar pessoa</button></div>`;
+      <div class="table-wrap"><table><thead><tr><th>Nome</th><th>Time</th><th>Papel</th><th>Situação</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
     body.querySelectorAll("tr[data-id]").forEach(tr => {
       const p = pessoa(tr.dataset.id);
       tr.querySelectorAll("[data-f]").forEach(inp => inp.addEventListener("change", () => {
@@ -349,14 +438,17 @@
   function editNiveis(body) {
     const colMods = state.modulos.filter(m => !m.todos);
     const opts = sel => NIVEIS.map((n, i) => `<option value="${i}"${i === sel ? " selected" : ""}>${esc(n.curto)}</option>`).join("");
-    const rows = PAPEIS.map(pp => `<tr><th scope="row">${esc(pp.nome)}</th>${colMods.map(m => `<td><select data-papel="${pp.id}" data-mod="${esc(m.id)}" aria-label="${esc(pp.nome)} em ${esc(m.nome)}">${opts(state.niveis[pp.id]?.[m.id] ?? 0)}</select></td>`).join("")}</tr>`).join("");
+    const rows = PAPEIS.map(pp => `<tr><th scope="row">${esc(pp.nome)}</th>${colMods.map(m => { const n = state.niveis[pp.id]?.[m.id] ?? 0; return `<td class="c-${n}"><select class="sel-lv sel-lv-${n}" data-papel="${pp.id}" data-mod="${esc(m.id)}" aria-label="${esc(pp.nome)} em ${esc(m.nome)}">${opts(n)}</select></td>`; }).join("")}</tr>`).join("");
     body.innerHTML = `
       <p class="muted">O nível de cada papel em cada módulo. Para membro e líder, ele só vale nos módulos que o time usa.</p>
       <div class="legend">${NIVEIS.map((n, i) => `<div class="item">${chip(i)}<span>${esc(n.descricao)}</span></div>`).join("")}</div>
       <div class="table-wrap"><table class="matrix"><thead><tr><th>Papel</th>${colMods.map(m => `<th>${esc(m.curto || m.nome)}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table></div>`;
     body.querySelectorAll("select[data-papel]").forEach(s => s.addEventListener("change", () => {
       state.niveis[s.dataset.papel] = state.niveis[s.dataset.papel] || {};
-      state.niveis[s.dataset.papel][s.dataset.mod] = Number(s.value);
+      const n = Number(s.value);
+      state.niveis[s.dataset.papel][s.dataset.mod] = n;
+      s.className = `sel-lv sel-lv-${n}`;
+      s.parentElement.className = `c-${n}`;
       salvar();
     }));
   }
@@ -423,8 +515,41 @@
       document.getElementById("confirm").hidden = true;
       mostrar();
     }
+    if (act === "nova-pessoa") abrirNovaPessoa();
+    if (act === "fechar-pessoa") document.getElementById("dlg-pessoa").hidden = true;
   });
-  document.addEventListener("keydown", e => { if (e.key === "Escape") document.getElementById("confirm").hidden = true; });
+  document.addEventListener("keydown", e => {
+    if (e.key !== "Escape") return;
+    document.getElementById("confirm").hidden = true;
+    document.getElementById("dlg-pessoa").hidden = true;
+  });
+
+  /* ---------- add person (top bar) ---------- */
+  const formPessoa = document.getElementById("form-pessoa");
+  function abrirNovaPessoa() {
+    const timeInicial = pessoaSel?.tid || timeSel || state.times[0]?.id;
+    formPessoa.reset();
+    formPessoa.elements.time.innerHTML = optsTimes(timeInicial);
+    formPessoa.elements.papel.innerHTML = optsPapel("membro");
+    document.getElementById("dlg-pessoa").hidden = false;
+    formPessoa.elements.nome.focus();
+  }
+  formPessoa.addEventListener("submit", e => {
+    e.preventDefault();
+    const f = formPessoa.elements;
+    const nome = f.nome.value.trim();
+    if (!nome) { f.nome.focus(); return; }
+    const id = "novo-" + Date.now();
+    const tid = f.time.value;
+    state.pessoas.push({ id, nome, time: tid, papel: f.papel.value });
+    if (f.lider.checked) { const t = time(tid); if (t) t.lider = id; }
+    salvar();
+    document.getElementById("dlg-pessoa").hidden = true;
+    selecionarDepois = { pid: id, tid };
+    if (tabAtual() === "mapa") mostrar();
+    else location.hash = "#mapa";
+  });
+  document.getElementById("dlg-pessoa").addEventListener("click", e => { if (e.target.id === "dlg-pessoa") e.currentTarget.hidden = true; });
 
   mostrar();
   if (document.fonts?.ready) document.fonts.ready.then(desenharLinhas);
